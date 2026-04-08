@@ -1,0 +1,8 @@
+# 必需依赖
+numpy>=1.24.0
+pandas>=1.5.0
+matplotlib>=3.7.0
+scipy>=1.10.0
+
+# 可选依赖（用于paint.py生成GIF动画）
+imageio>=2.31.0

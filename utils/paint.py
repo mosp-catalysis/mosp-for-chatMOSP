@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 读取包含位点类型的 XYZ 文件，绘制三维原子结构图
@@ -116,16 +116,65 @@ def read_xyz(file_path):
 
 
 # ---------------------------- 绘图函数（支持 GIF） ----------------------------
-def plot_structure(particle, color_by='element', output_file=None, gif_file=None):
+def plot_structure(particle, color_by='element', output_file=None, gif_file=None, xyz_file=None):
     """
     使用 matplotlib 绘制三维原子结构
     particle: NanoParticle 对象
     color_by: 颜色依据（'element' 或 'site_type'）
     output_file: 若提供，则保存静态图像到该文件
     gif_file: 若提供，则生成旋转 GIF 动画保存到该文件
+    xyz_file: XYZ文件路径，用于提取标题（可选）
     """
     particle.setColors(color_by)
     colors = particle.colors
+
+    # ========== 标题生成（健壮版） ==========
+    title = None
+    
+    if xyz_file:
+        try:
+            import os
+            file_dir = os.path.dirname(os.path.abspath(xyz_file))
+            parent_dir = os.path.basename(file_dir)
+            
+            if parent_dir and parent_dir.strip():
+                # 尝试解析任务格式：Metal_Gas1_pp_Gas2_pp_TempK_PressPa_RRadius
+                parts = parent_dir.split('_')
+                
+                # 验证格式：至少5个部分，且温度部分包含'K'
+                if len(parts) >= 5 and 'K' in parts[3]:
+                    metal = parts[0]
+                    # 气体分压：保留原始格式并添加%符号
+                    gases = ' '.join([f"{p}%" for p in parts[1:3]])
+                    temp = parts[3]
+                    # 压强：如果只是数字则添加Pa单位
+                    pressure = parts[4] if len(parts) > 4 else ''
+                    if pressure and pressure.replace('.', '').isdigit():
+                        pressure = f"{pressure}Pa"
+                    # 半径：保留R前缀，添加Å单位
+                    radius = parts[5] if len(parts) > 5 else ''
+                    if radius:
+                        radius = f"{radius}Å"
+                    
+                    # 构建标题，包含压强和团簇尺寸
+                    title_parts = [metal]
+                    if pressure:
+                        title_parts.append(pressure)
+                    title_parts.extend([gases, temp])
+                    if radius:
+                        title_parts.append(radius)
+                    title = ' '.join(title_parts) + ' Structure'
+                else:
+                    # 格式不匹配，使用父目录名（去掉下划线）
+                    title = parent_dir.replace('_', ' ')
+        except Exception as e:
+            # 发生异常，打印警告并使用默认标题
+            print(f"Warning: Failed to extract title from path: {e}")
+            title = None
+    
+    # 最终fallback：使用默认标题
+    if title is None:
+        title = 'Atomic Structure'
 
     # 公共数据
     x = particle.positions[:, 0]
@@ -156,7 +205,7 @@ def plot_structure(particle, color_by='element', output_file=None, gif_file=None
             ax.set_xlabel('X (Å)')
             ax.set_ylabel('Y (Å)')
             ax.set_zlabel('Z (Å)')
-            ax.set_title(f'Atomic Structure (colored by {color_by})')
+            ax.set_title(title)
             # 设置等比例坐标范围
             ax.set_xlim(mid_x - max_range, mid_x + max_range)
             ax.set_ylim(mid_y - max_range, mid_y + max_range)
@@ -184,7 +233,7 @@ def plot_structure(particle, color_by='element', output_file=None, gif_file=None
         ax.set_xlabel('X (Å)')
         ax.set_ylabel('Y (Å)')
         ax.set_zlabel('Z (Å)')
-        ax.set_title(f'Atomic Structure (colored by {color_by})')
+        ax.set_title(title)
         ax.set_xlim(mid_x - max_range, mid_x + max_range)
         ax.set_ylim(mid_y - max_range, mid_y + max_range)
         ax.set_zlim(mid_z - max_range, mid_z + max_range)
@@ -213,7 +262,7 @@ def main():
     particle = NanoParticle(eles, positions, siteTypes=site_types)
 
     # 绘图（静态或 GIF）
-    plot_structure(particle, color_by=args.color_by, output_file=args.output, gif_file=args.gif)
+    plot_structure(particle, color_by=args.color_by, output_file=args.output, gif_file=args.gif, xyz_file=args.xyz_file)
 
 
 if __name__ == "__main__":

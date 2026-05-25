@@ -10,7 +10,7 @@
     "Radius": "40",
     "Gas1_name": "CO",
     "Gas1_pp": "50",
-    "Gas1_S": "0.00223",
+    "Gas1_S": "0.002287",
     "Gas1_type": "Associative",
     "Gas2_name": "H2O",
     "Gas2_pp": "50",

@@ -164,7 +164,7 @@ def gen_hcp(dim, latt_param_a, latt_param_c):
     for i, rep in enumerate(reps):
         dist = [latt_param_a * rep[0], latt_param_a * rep[1], latt_param_c * rep[2]]
         a1a2c = prim_block + dist
-        xyz = np.asmatrix(coord_transform) * np.asmatrix(a1a2c).T
+        xyz = (np.asmatrix(coord_transform) * np.asmatrix(a1a2c).T).getA()
         bulk_xyz[i * 2:i * 2 + 2, :] = xyz.T
     center = np.sum(bulk_xyz, axis=0) / bulk_xyz.shape[0]
     bulk_xyz -= center
@@ -221,6 +221,7 @@ class Wulff:
         self.d = 0.0  # radius of nanoparticle
 
         self.nGas = 3
+        self.gas_names = []
         self.rPP = np.array([])  # partial pressure
         self.S_gas = np.array([[]])  # factors to compute adsorption entropy (of each gas)
         self.ads_type = np.array([[]])  # adsorption type of each gas
@@ -261,6 +262,9 @@ class Wulff:
         # Gases Info
         self.nGas = 3
         PP_l = [paradic["Gas1_pp"], paradic["Gas2_pp"], paradic["Gas3_pp"]]
+        name_l = [paradic.get("Gas1_name", "Gas1"),   # 使用 .get() 避免键缺失时报错
+                  paradic.get("Gas2_name", "Gas2"),
+                  paradic.get("Gas3_name", "Gas3")]
         S_l = [paradic["Gas1_S"], paradic["Gas2_S"], paradic["Gas3_S"]]
         type_l = [paradic["Gas1_type"], paradic["Gas2_type"], paradic["Gas3_type"]]
         for i in range(self.nGas):
@@ -274,6 +278,7 @@ class Wulff:
                 S = float(S_l[i]) - k_b*np.log(rPP/P0)
                 self.S_gas = np.append(self.S_gas, S)
                 self.ads_type = np.append(self.ads_type, type_l[i])
+                self.gas_names.append(name_l[i])    # ← 保存气体名称
 
         # Faces Info
         self.face_num = paradic["nFaces"]
@@ -392,7 +397,7 @@ class Wulff:
             cal_w = np.asmatrix(self.w[m]) * np.asmatrix(self.coverage[m]).T
             cal_w = cal_w.getA().flatten()
             r_ads = (self.E_ads[m] - cal_w) / self.A_atoms[m]
-            r_gamma = np.asmatrix(self.coverage[m]) * np.asmatrix(r_ads).T
+            r_gamma = float((np.asmatrix(self.coverage[m]) * np.asmatrix(r_ads).T).item())
             self.revised_gamma[m] = float(self.gamma[m] + r_gamma)
 
             plane = get_planes(self.face_index[m], self.structure)
@@ -477,9 +482,20 @@ class Wulff:
 
     def geometry(self):
         planes, surface_energies = self.gen_surface_energies()
+        # 检查是否存在非正的修正表面能
         if sum(self.revised_gamma > 0) != self.face_num:
+            print("\nERROR: Negative surface energy detected.")
+            # 构建表头，使用存储的气体名称
+            header = "Face index : revised_gamma  |  coverages " + " ".join(self.gas_names)
+            print(header)
+            for idx, face in enumerate(self.face_index):
+                gamma_val = self.revised_gamma[idx]
+                cov_list = [f"{self.coverage[idx, i]:.4f}" for i in range(self.nGas)]
+                cov_str = ", ".join(cov_list)
+                print(f"  {face:>6s} : {gamma_val:>12.6f}  |  {cov_str}")
             message = "Nanoparticle broken \n\nNegative surface energy "
             return 0, message
+    
         length = [e * self.d / np.min(surface_energies) for e in surface_energies]
         length = np.array(length)
         bulk_dim = np.min(length) * 3
@@ -520,14 +536,15 @@ class Wulff:
         record_df.loc['number'] = n_surfs
         for i in range(self.nGas):
             record_df.loc[f'coverage{i+1}'] = self.coverage[:,i]
-        record_df = record_df.applymap(lambda x: '%.2f'%x)
-        record_df['edges'] = '/'
-        record_df['corners'] = '/'
-        record_df['subsurface'] = '/'
+        
+        record_df['edges'] = 0
+        record_df['corners'] = 0
+        record_df['subsurface'] = 0
         record_df.loc['number', 'edges'] = nedges
         record_df.loc['number', 'corners'] = ncorners
         record_df.loc['number', 'subsurface'] = nsurf - n_surfs.sum() - nedges - ncorners
         record_df.loc['number'] = record_df.loc['number'].astype(float).astype(int)
+        record_df = record_df.map(lambda x: '%.2f'%x if isinstance(x, (int, float)) else x)
         self.record_df = record_df
         
         faceinfo_path = os.path.join(self.output_dir, 'faceinfo.txt')

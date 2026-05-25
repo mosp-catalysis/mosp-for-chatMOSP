@@ -239,7 +239,7 @@ def compute_bond_length(data: Dict[str, object]) -> float:
 
 def reset_run_directory(out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    for name in ["INPUT"]:  # 只删除INPUT目录，OUTPUT目录保留作为临时目录
+    for name in ["INPUT", "OUTPUT"]:
         target = out_dir / name
         if target.exists():
             try:
@@ -258,9 +258,6 @@ def reset_run_directory(out_dir: Path) -> None:
         "site_tof.csv",
         "coverage.png",
         "tof.png",
-        "rec_cov.data",
-        "rec_event.data",
-        "rec_site_spc.data",  # 添加KMC原始输出文件
     ]:
         target = out_dir / name
         if target.exists():
@@ -411,19 +408,6 @@ def run_engine(engine_dir: Path, out_dir: Path) -> None:
     if result.stderr:
         log_text += "\n[stderr]\n" + result.stderr
     (out_dir / "run.log").write_text(log_text, encoding="utf-8")
-    
-    # 将输出文件从OUTPUT目录移动到根目录
-    output_dir = out_dir / "OUTPUT"
-    if output_dir.exists():
-        for output_file in output_dir.iterdir():
-            if output_file.is_file():
-                shutil.move(str(output_file), str(out_dir / output_file.name))
-        # 删除空的OUTPUT目录
-        try:
-            output_dir.rmdir()
-        except OSError:
-            pass  # 如果目录不为空，保留它
-    
     if result.returncode != 0:
         fail(f"main.exe failed with exit code {result.returncode}. See {out_dir / 'run.log'}")
 
@@ -587,7 +571,7 @@ def main() -> int:
     write_input_files(parsed, xyz_path, out_dir)
     run_engine(engine_dir, out_dir)
 
-    outputs = load_outputs(out_dir)
+    outputs = load_outputs(out_dir / "OUTPUT")
     tables = compute_tof_tables(
         outputs["event"],
         outputs["site"],

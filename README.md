@@ -95,9 +95,9 @@ pip install numpy pandas matplotlib scipy imageio
 python -c "import numpy, pandas, matplotlib; print('✅ Python依赖安装成功')"
 ```
 
-### 🔗 与ChatMOSP集成配置（重要！）
+### 🔗 与chatMOSP集成配置（重要！）
 
-**问题**：ChatMOSP技能期望`chatMOSP/`目录，但本软件安装为`mosp-for-chatMOSP/`
+**问题**：chatMOSP技能期望`chatMOSP/`目录，但本软件安装为`mosp-for-chatMOSP/`
 
 **解决方案**：创建符号链接
 
@@ -120,7 +120,7 @@ workspace/
 │   ├── engine/                         # Windows计算引擎
 │   ├── examples/                       # 示例文件
 │   └── ...
-├── chatMOSP-skill/                     # ChatMOSP技能
+├── chatMOSP-skill/                     # chatMOSP技能
 └── skills/                             # OpenClaw技能目录
 ```
 
@@ -175,7 +175,7 @@ else
     echo "❌ main.exe不存在"
 fi
 
-echo "\n4. 符号链接检查（ChatMOSP集成）:"
+echo "\n4. 符号链接检查（chatMOSP集成）:"
 if [ -L "../chatMOSP" ] && [ "$(readlink -f ../chatMOSP)" = "$(pwd)" ]; then
     echo "✅ 符号链接配置正确: chatMOSP -> $(basename $(pwd))"
 else
@@ -349,7 +349,7 @@ pip install numpy pandas matplotlib scipy imageio
 chmod +x engine/main.exe
 ```
 
-#### 4. 路径错误（ChatMOSP集成）
+#### 4. 路径错误（chatMOSP集成）
 **错误**: `FileNotFoundError: No such file or directory: 'chatMOSP/engine/main.exe'`
 ```bash
 # 确保符号链接正确
@@ -493,7 +493,7 @@ echo "\n🎯 诊断完成！"
 - ✅ 添加符号链接配置指南
 - ✅ 完善故障排除文档
 - ✅ 集成内联诊断脚本
-- ✅ 验证ChatMOSP集成
+- ✅ 验证chatMOSP集成
 
 ### 未来计划
 - 🔄 开发Linux原生编译版本

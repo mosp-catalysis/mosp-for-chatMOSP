@@ -54,10 +54,26 @@ brew install wine
 
 ### Python Environment (All Platforms)
 
+**⚠️ Ubuntu/Debian users (Python 3.12+):** pip is blocked by PEP 668 from installing system-wide.
+Use a virtual environment — the installer will do this automatically, or manually:
+
 ```bash
+# Install python3-venv (required for virtual environment)
+sudo apt-get install -y python3-venv
+
+# Create and activate virtual environment
 python3 -m venv venv
 source venv/bin/activate   # Linux/macOS
+
+# Install dependencies (inside venv, PEP 668 does not apply)
 pip install -r requirements.txt
+```
+
+**Or run the installer which handles everything automatically:**
+
+```bash
+bash install.sh
+source venv/bin/activate   # activate after installation
 ```
 
 ### chatMOSP Integration

@@ -66,6 +66,12 @@ if [[ "$PLATFORM" == "Linux" ]]; then
             sudo apt-get install -y wine64 wine32
         fi
 
+        # Install xvfb for headless environments (Wine requires X11 display)
+        if ! command -v xvfb-run &>/dev/null; then
+            info "Installing xvfb for headless Wine support..."
+            sudo apt-get install -y xvfb
+        fi
+
         # Verify python3-venv now available
         if ! python3 -m venv --help &>/dev/null 2>&1; then
             error "python3-venv installation failed or python3 -m venv unavailable."

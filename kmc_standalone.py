@@ -79,6 +79,12 @@ def require_file(path: Path, label: str) -> Path:
 def normalize_run_dir(raw_out_dir: str, runs_root: Path) -> Path:
     candidate = Path(raw_out_dir)
     if not candidate.is_absolute():
+        # Strip a redundant leading runs_root name (e.g. "OUTPUT/") so that
+        # passing either "<task>" or "OUTPUT/<task>" both resolve to
+        # runs_root/<task>, avoiding an "OUTPUT/OUTPUT/<task>" duplication.
+        parts = candidate.parts
+        if parts and parts[0] == runs_root.name:
+            candidate = Path(*parts[1:]) if len(parts) > 1 else Path()
         candidate = runs_root / candidate
     resolved_runs_root = runs_root.resolve()
     resolved_candidate = candidate.resolve()
@@ -395,8 +401,18 @@ def run_engine(engine_dir: Path, out_dir: Path) -> None:
     exe_path = engine_dir / ENGINE_EXECUTABLE
     env = os.environ.copy()
     env.update({"PATH": str(engine_dir) + ";" + env.get("PATH", "")})
+    # Use 64-bit Wine loader when available (required for 64-bit PE binaries).
+    # Ubuntu's /usr/bin/wine favours the 32-bit loader even on amd64 hosts.
+    wine_cmd = "wine"
+    for candidate in (shutil.which("wine64"), "/usr/lib/wine/wine64"):
+        if candidate and Path(candidate).is_file():
+            wine_cmd = candidate
+            break
+    cmd = [wine_cmd, str(exe_path)]
+    if not os.environ.get("DISPLAY"):
+        cmd = ["xvfb-run", "-a"] + cmd
     result = subprocess.run(
-        ["wine", str(exe_path)],
+        cmd,
         cwd=str(out_dir),
         capture_output=True,
         text=True,
@@ -487,11 +503,13 @@ def compute_tof_tables(
     sub_ton = ton.iloc[::interval].copy()
     diff_ton = sub_ton.diff().iloc[1:].copy()
 
-    tof = diff_ton[["Time"]].copy()
+    tof = pd.DataFrame()
+    tof["Time"] = diff_ton["Time"]  # 时间间隔（用于TOF计算）
+    tof["AbsTime"] = sub_ton["Time"].iloc[1:]  # 绝对时间（用于绘图）
+    tof["Steps"] = sub_ton.index[1:].astype(int)
     for product in products:
         tof[product.name] = diff_ton[product.name] / diff_ton["Time"] / nsurf
-
-    tof.insert(0, "Steps", diff_ton.index.astype(int))
+    tof = tof[["Steps", "Time", "AbsTime"] + [p.name for p in products]]
 
     site_tof = site_df[["x", "y", "z", "cov", "cn", "gcn"]].copy()
     for product in products:
@@ -506,7 +524,7 @@ def compute_tof_tables(
     }
 
 
-def plot_coverage(cov_df: pd.DataFrame, output_path: Path) -> None:
+def plot_coverage(cov_df: pd.DataFrame, output_path: Path, kmc_info: Dict[str, str] = None) -> None:
     species_columns = [column for column in cov_df.columns if column not in {"Time", "Steps"}]
     if not species_columns:
         fail("rec_cov.data does not contain coverage columns")
@@ -516,16 +534,47 @@ def plot_coverage(cov_df: pd.DataFrame, output_path: Path) -> None:
         ax.plot(cov_df["Time"], cov_df[column], label=column)
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Coverage")
+    if kmc_info:
+        title = f"{kmc_info.get('metal', '')} {kmc_info.get('gases', '')} {kmc_info.get('temperature', '')}K {kmc_info.get('pressure', '')}Pa"
+        ax.set_title(title, fontsize=16)
     ax.grid(linestyle="--")
     ax.xaxis.set_major_formatter(FORMATTER)
+    y_max = ax.get_ylim()[1]
+    ax.set_ylim(bottom=0, top=y_max * 1.15)
+    ax.set_xlim(left=0)
     ax.legend(frameon=False)
     fig.tight_layout()
     fig.savefig(output_path, dpi=200)
     plt.close(fig)
 
 
-def plot_tof(tof_df: pd.DataFrame, output_path: Path) -> None:
-    product_columns = [column for column in tof_df.columns if column not in {"Steps", "Time"}]
+def plot_coverage_steps(cov_df: pd.DataFrame, output_path: Path, kmc_info: Dict[str, str] = None) -> None:
+    """Plot coverage evolution over steps"""
+    species_columns = [column for column in cov_df.columns if column not in {"Time", "Steps"}]
+    if not species_columns:
+        fail("rec_cov.data does not contain coverage columns")
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for column in species_columns:
+        ax.plot(cov_df["Steps"], cov_df[column], label=column)
+    ax.set_xlabel("Steps")
+    ax.set_ylabel("Coverage")
+    if kmc_info:
+        title = f"{kmc_info.get('metal', '')} {kmc_info.get('gases', '')} {kmc_info.get('temperature', '')}K {kmc_info.get('pressure', '')}Pa"
+        ax.set_title(title, fontsize=16)
+    ax.grid(linestyle="--")
+    ax.xaxis.set_major_formatter(FORMATTER)
+    y_max = ax.get_ylim()[1]
+    ax.set_ylim(bottom=0, top=y_max * 1.15)
+    ax.set_xlim(left=0)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+
+def plot_tof(tof_df: pd.DataFrame, output_path: Path, kmc_info: Dict[str, str] = None) -> None:
+    product_columns = [column for column in tof_df.columns if column not in {"Steps", "Time", "AbsTime"}]
     if not product_columns:
         fail("TOF table does not contain product columns")
 
@@ -541,8 +590,48 @@ def plot_tof(tof_df: pd.DataFrame, output_path: Path) -> None:
         )
     ax.set_xlabel("Steps")
     ax.set_ylabel("TOF (1/s/site)")
+    if kmc_info:
+        title = f"{kmc_info.get('metal', '')} {kmc_info.get('gases', '')} {kmc_info.get('temperature', '')}K {kmc_info.get('pressure', '')}Pa"
+        ax.set_title(title, fontsize=16)
     ax.grid(linestyle="--")
     ax.yaxis.set_major_formatter(FORMATTER)
+    y_max = ax.get_ylim()[1]
+    ax.set_ylim(bottom=0, top=y_max * 1.15)
+    ax.set_xlim(left=0)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+
+
+def plot_tof_time(tof_df: pd.DataFrame, output_path: Path, kmc_info: Dict[str, str] = None) -> None:
+    """Plot TOF evolution over time"""
+    product_columns = [column for column in tof_df.columns if column not in {"Steps", "Time", "AbsTime"}]
+    if not product_columns:
+        fail("TOF table does not contain product columns")
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for column in product_columns:
+        ax.plot(
+            tof_df["AbsTime"],
+            tof_df[column],
+            marker="o",
+            markersize=4,
+            markerfacecolor="#FFF5E3",
+            label=column,
+        )
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("TOF (1/s/site)")
+    if kmc_info:
+        title = f"{kmc_info.get('metal', '')} {kmc_info.get('gases', '')} {kmc_info.get('temperature', '')}K {kmc_info.get('pressure', '')}Pa"
+        ax.set_title(title, fontsize=16)
+    ax.grid(linestyle="--")
+    y_formatter = ticker.ScalarFormatter(useMathText=True)
+    y_formatter.set_powerlimits((-2, 2))
+    ax.yaxis.set_major_formatter(y_formatter)
+    ax.set_xlim(left=0)
+    y_max = ax.get_ylim()[1]
+    ax.set_ylim(bottom=0, top=y_max * 1.15)
     ax.legend(frameon=False)
     fig.tight_layout()
     fig.savefig(output_path, dpi=200)
@@ -584,12 +673,27 @@ def main() -> int:
     write_csv(tables["tof"], out_dir / "tof.csv")
     write_csv(tables["site_tof"], out_dir / "site_tof.csv")
 
-    plot_coverage(outputs["cov"], out_dir / "coverage.png")
-    plot_tof(tables["tof"], out_dir / "tof.png")
+    species_names = [
+        str(s.get("name") or s.get("default_name") or f"Specie{idx}")
+        for idx, s in enumerate(parsed["species"], start=1)
+    ]
+    kmc_info = {
+        "metal": str(parsed["top_level"]["Element"]),
+        "temperature": str(parsed["top_level"]["Temperature"]),
+        "pressure": str(parsed["top_level"]["Pressure"]),
+        "gases": " + ".join(species_names),
+    }
+
+    plot_coverage(outputs["cov"], out_dir / "coverage.png", kmc_info)
+    plot_coverage_steps(outputs["cov"], out_dir / "coverage_steps.png", kmc_info)
+    plot_tof(tables["tof"], out_dir / "tof.png", kmc_info)
+    plot_tof_time(tables["tof"], out_dir / "tof_time.png", kmc_info)
 
     print(f"Run completed: {out_dir}")
     print(f"Coverage plot: {out_dir / 'coverage.png'}")
+    print(f"Coverage (Steps) plot: {out_dir / 'coverage_steps.png'}")
     print(f"TOF plot: {out_dir / 'tof.png'}")
+    print(f"TOF (Time) plot: {out_dir / 'tof_time.png'}")
     return 0
 
 

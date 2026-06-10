@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+author: Sanyang Ye
 读取包含位点类型的 XYZ 文件，绘制三维原子结构图
 支持静态显示或生成旋转 GIF 动画
 用法:
@@ -115,6 +116,77 @@ def read_xyz(file_path):
     return ele, np.array(coords), site_types
 
 
+# ---------------------------- 辅助：自适应原子尺寸 ----------------------------
+def _auto_marker_size(n_atoms):
+    """
+    根据原子数返回 3D scatter 的 marker 面积 (points^2)。
+    原子越少越大，原子越多适当减小，但始终保证最外层原子足够大、彼此紧贴，
+    使内部原子被完全遮挡，从而清晰呈现团簇外形。
+    """
+    if n_atoms <= 0:
+        return 200
+    if n_atoms <= 200:
+        return 320
+    if n_atoms <= 1000:
+        return 220
+    if n_atoms <= 3000:
+        return 150
+    if n_atoms <= 8000:
+        return 90
+    return 60
+
+
+# ---------------------------- 独立图例图片（离散类别） ----------------------------
+def save_legend(labels, colors, output_file, title=None):
+    """
+    为离散类别着色(element / site_type)单独生成一张图例图片(色块 + 标签)。
+
+    结构图/动图本身不带图例;离散类别用图例(而非渐变 colorbar)才符合语义。
+    便于将多张结构图与一张统一图例一起展示。
+
+    Args:
+        labels: 类别标签列表(如 ['Pt', 'O'] 或 ['100', '111', 'edge'])
+        colors: 与 labels 对应的 RGB 颜色列表(0-1 范围)
+        output_file: 输出图片路径
+        title: 图例标题(可选,如 'Element' / 'Site type')
+    """
+    from matplotlib.patches import Patch
+
+    handles = [Patch(facecolor=c, edgecolor='k', linewidth=0.5, label=str(l))
+               for l, c in zip(labels, colors)]
+    n = max(len(handles), 1)
+    fig, ax = plt.subplots(figsize=(2.4, 0.45 * n + 0.6))
+    ax.axis('off')
+    legend = ax.legend(handles=handles, loc='center', frameon=True,
+                       fontsize=12, title=title, handlelength=1.2)
+    if title:
+        legend.get_title().set_fontsize(13)
+    fig.savefig(output_file, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Legend saved to {output_file}")
+
+
+# ---------------------------- 独立 colorbar 图片（连续数值） ----------------------------
+def save_colorbar(cmap, vmin, vmax, label, output_file, orientation='vertical'):
+    """
+    单独生成一张 colorbar 图片（结构图/动图本身不再附带 colorbar）。
+    便于将多张结构图与一张统一 colorbar 一起展示。
+    """
+    norm = plt.Normalize(vmin=vmin, vmax=vmax)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    if orientation == 'vertical':
+        fig, ax = plt.subplots(figsize=(1.4, 6))
+        cbar = fig.colorbar(sm, cax=ax, orientation='vertical')
+    else:
+        fig, ax = plt.subplots(figsize=(6, 1.4))
+        cbar = fig.colorbar(sm, cax=ax, orientation='horizontal')
+    cbar.set_label(label, fontsize=14)
+    fig.savefig(output_file, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Colorbar saved to {output_file}")
+
+
 # ---------------------------- 绘图函数（支持 GIF） ----------------------------
 def plot_structure(particle, color_by='element', output_file=None, gif_file=None, xyz_file=None):
     """
@@ -187,6 +259,38 @@ def plot_structure(particle, color_by='element', output_file=None, gif_file=None
     mid_y = (y.max()+y.min()) * 0.5
     mid_z = (z.max()+z.min()) * 0.5
 
+    # 计算原子绘制尺寸：随原子数自适应，保证最外层原子足够大、彼此紧贴、
+    # 不透明（看不到内部原子），从而清晰呈现团簇外形。
+    marker_size = _auto_marker_size(particle.nAtoms)
+
+    def _render(ax, azim):
+        """在给定坐标轴上绘制不透明大尺寸原子（按深度排序消除穿插）。"""
+        # 依据当前视角的进深对原子排序，先画后方再画前方，避免后方原子盖住前方。
+        rad = np.deg2rad(azim)
+        depth = x * np.cos(rad) + y * np.sin(rad)
+        order = np.argsort(depth)
+        ax.scatter(
+            x[order], y[order], z[order],
+            c=colors[order],
+            s=marker_size,
+            edgecolors='k',
+            linewidth=0.4,
+            alpha=1.0,            # 完全不透明，遮住内部原子
+            depthshade=False,     # 关闭自动暗化，保持配色一致
+        )
+        ax.set_xlabel('X (Å)')
+        ax.set_ylabel('Y (Å)')
+        ax.set_zlabel('Z (Å)')
+        ax.set_title(title)
+        ax.set_xlim(mid_x - max_range, mid_x + max_range)
+        ax.set_ylim(mid_y - max_range, mid_y + max_range)
+        ax.set_zlim(mid_z - max_range, mid_z + max_range)
+        try:
+            ax.set_box_aspect((1, 1, 1))   # 等比例，避免拉伸变形
+        except Exception:
+            pass
+        ax.view_init(elev=30, azim=azim)
+
     if gif_file:
         # 生成旋转 GIF
         try:
@@ -195,52 +299,56 @@ def plot_structure(particle, color_by='element', output_file=None, gif_file=None
             print("Error: imageio is required to create GIF. Please install it (pip install imageio).")
             sys.exit(1)
 
-        angles = range(0, 360, 5)  # 每5度一帧，共72帧
+        angles = range(0, 360, 10)  # 每10度一帧，共36帧（更小体积、更快）
         frames = []
         for angle in angles:
             fig = plt.figure(figsize=(8, 6))
             ax = fig.add_subplot(111, projection='3d')
-            # 绘制原子（原子大小 120，比原来 80 大 1.5 倍）
-            ax.scatter(x, y, z, c=colors, s=120, edgecolors='k', linewidth=0.5)
-            ax.set_xlabel('X (Å)')
-            ax.set_ylabel('Y (Å)')
-            ax.set_zlabel('Z (Å)')
-            ax.set_title(title)
-            # 设置等比例坐标范围
-            ax.set_xlim(mid_x - max_range, mid_x + max_range)
-            ax.set_ylim(mid_y - max_range, mid_y + max_range)
-            ax.set_zlim(mid_z - max_range, mid_z + max_range)
-            # 设置视角：固定仰角30°，方位角不断变化
-            ax.view_init(elev=30, azim=angle)
-            # 保存当前帧到内存
+            _render(ax, angle)
             fig.canvas.draw()
-            # 获取图像数据：使用 buffer_rgba() 获得 RGBA 格式，然后转换为 RGB
             buffer = fig.canvas.buffer_rgba()
-            img = np.asarray(buffer)          # shape (height, width, 4)
-            img = img[:, :, :3]               # 丢弃 alpha 通道，保留 RGB
+            img = np.asarray(buffer)[:, :, :3]   # 丢弃 alpha 通道
             frames.append(img)
-            plt.close(fig)  # 关闭图形释放内存
+            plt.close(fig)
 
-        # 保存 GIF
         imageio.mimsave(gif_file, frames, fps=10)
         print(f"GIF saved to {gif_file}")
     else:
         # 静态显示或保存静态图像
         fig = plt.figure(figsize=(8, 6))
         ax = fig.add_subplot(111, projection='3d')
-        # 原子大小 120
-        ax.scatter(x, y, z, c=colors, s=120, edgecolors='k', linewidth=0.5)
-        ax.set_xlabel('X (Å)')
-        ax.set_ylabel('Y (Å)')
-        ax.set_zlabel('Z (Å)')
-        ax.set_title(title)
-        ax.set_xlim(mid_x - max_range, mid_x + max_range)
-        ax.set_ylim(mid_y - max_range, mid_y + max_range)
-        ax.set_zlim(mid_z - max_range, mid_z + max_range)
+        _render(ax, 30)
 
         if output_file:
             plt.savefig(output_file, dpi=150, bbox_inches='tight')
             print(f"Image saved to {output_file}")
+            # 离散类别着色:单独生成图例图片(色块+标签),便于多图统一展示
+            import os
+            base, _ = os.path.splitext(output_file)
+            if color_by == 'element':
+                cats = list(dict.fromkeys(particle.eles.tolist()))
+                legend_labels = cats
+                legend_title = 'Element'
+                # MSR 自动检测：若存在 site_type 且 element↔site_type 一一对应，
+                # 图例标签改用 site_type（MSR 伪元素场景）
+                if particle.siteTypes is not None:
+                    e2t = {}
+                    mapping_ok = True
+                    for e, t in zip(particle.eles, particle.siteTypes):
+                        t = t.strip()
+                        if e in e2t and e2t[e] != t:
+                            mapping_ok = False
+                            break
+                        e2t[e] = t
+                    if mapping_ok:
+                        legend_labels = [e2t.get(c, c) for c in cats]
+                        legend_title = 'Site type'
+                save_legend(legend_labels, [get_ele_color(c) for c in cats],
+                            base + '_legend.png', title=legend_title)
+            elif color_by == 'site_type' and particle.siteTypes is not None:
+                cats = list(dict.fromkeys(s.strip() for s in particle.siteTypes))
+                save_legend(cats, [get_type_color(c) for c in cats],
+                            base + '_legend.png', title='Site type')
         else:
             plt.show()
 
